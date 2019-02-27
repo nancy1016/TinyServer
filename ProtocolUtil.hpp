@@ -40,7 +40,7 @@ const char*erroLevel[]=
 //文件日志信息
 void log(std::string msg,int level,std::string file,int line)
 {
-    std::cout<<file<<" : "<< line <<"  "<< msg <<erroLevel[level]<<std::endl;
+std::cout<<"[ "<<file<<" : "<< line <<" ] "<< msg <<" ["<<erroLevel[level]<<"]"<<std::endl;
 }
 
 #define LOG(msg,level) log(msg,level,__FILE__,__LINE__);
@@ -75,6 +75,26 @@ class Util
                     break;
             }
             return  "Unknow";
+        }
+        static std::string SuffixToContent(std::string &suffix)
+        {
+            if(suffix==".css")
+            {
+                return "text/css";
+            }
+            if(suffix==".js")
+            {
+                return "application/x-javascript";
+            }
+            if(suffix==".html"|| suffix==".htm")
+            {
+                return "text/html";
+            }
+            if(suffix==".jpg")
+            {
+                return "application/x-jpg";
+            }
+            return "text/html";
         }
 };
 class SocketApi
@@ -185,16 +205,34 @@ class Http_Response
             status_line+="  ";
             status_line+=Util::CodeToDesc(code);
             status_line+="\r\n";
+            LOG("Make Status Line done!",NORMAL);
         }
         void MakeResponseHeader()
         {
             std::string line;
+            std::string suffix;//后缀
+            //Content_Type
+            line="Content-Type: ";
+            std::size_t pos= path.rfind('.');
+            if(std::string::npos!=pos)
+            {
+                suffix=path.substr(pos);
+                transform(suffix.begin(),suffix.end(),suffix.begin(),::tolower);
+            }
+            line+=Util::SuffixToContent(suffix);
+            line+="\r\n";
+            response_header.push_back(line);
+
+            //Content_Length
             line="Content-Length: ";
             line+=Util::IntToString(recource_size);
             line+="\r\n";
             response_header.push_back(line);
+
             line="\r\n";
             response_header.push_back(line);
+
+            LOG("Make Response Header Done!",NORMAL);
         }
         ~Http_Response()
         {}
@@ -320,6 +358,7 @@ class Http_Request
             //文件存在且合法
             rsp->SetPath(path);
             rsp->SetRecourceSize(rs);
+            LOG("Path is OK!",NORMAL);
             return 0;
         }
 
@@ -403,6 +442,7 @@ class Connect
                     v.push_back(line);
                 }
             }
+            LOG("Header Recv OK!",NORMAL);
         }
 
         //读取正文
@@ -460,6 +500,7 @@ class Entry
             conn->SendStatusLine(rsp);
             conn->SendHeader(rsp); //add \n
             conn->SendText(rsp);
+            LOG("Send Response Done!",NORMAL);
         }
         static void ProcessResponse(Connect*conn,Http_Request*rq,Http_Response*rsp)
         {
@@ -469,6 +510,7 @@ class Entry
             }
             else
             {
+                LOG("MakeResponse Use Non Cgi",NORMAL);
                 ProcessNonCgi(conn,rq,rsp);
             }
             
@@ -516,9 +558,10 @@ class Entry
             //判断是否需要继续读取
             if(rq->IsNeedRecv())
             {
+                LOG("POST Method,Need Recv Begin!",NORMAL);
                 conn->RecvText(rq->request_text,rq->ContentLength());
             }
-
+            LOG("Http Request Recv Done,OK!",NORMAL);
             ProcessResponse(conn,rq,rsp);
 
 end:
