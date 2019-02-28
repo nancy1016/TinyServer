@@ -21,6 +21,7 @@
 #include<sys/stat.h>
 #include<fcntl.h>
 #include<sys/sendfile.h>
+#include<sys/wait.h>
 #define BACKLOG 5
 #define BUFF_NUM 1024
 #define NORMAL 0
@@ -265,6 +266,7 @@ class Http_Request
              ,cgi(false)
              ,blank("\r\n")
         {}
+
         void RequestLineParse()
         {
             //1 -> 3 分割请求行
@@ -381,6 +383,18 @@ class Http_Request
             ss>>content_length;
             return content_length;
         }
+        std::string GetParam()
+        {
+            if(method=="GET")
+            {
+                return query_string;
+            }
+            else
+            {
+                return request_text;
+            }
+        }
+
         ~Http_Request()
         {}
 
@@ -468,17 +482,25 @@ class Connect
                 send(sock,it->c_str(),it->size(),0);
             }
         }
-        void SendText(Http_Response*rsp)
+        void SendText(Http_Response*rsp,bool _cgi)
         {
-            std::string& path=rsp->Path();
-            int fd=open(path.c_str(),O_RDONLY);
-            if(fd<0)
+            if(!_cgi)
             {
-                LOG("open file error!",WARNING);
-                return;
+                std::string& path=rsp->Path();
+                int fd=open(path.c_str(),O_RDONLY);
+                if(fd<0)
+                {
+                    LOG("open file error!",WARNING);
+                    return;
+                }
+                sendfile(sock,fd,NULL,rsp->RecourceSize());
+                close(fd);
             }
-            sendfile(sock,fd,NULL,rsp->RecourceSize());
-            close(fd);
+            else
+            {
+                std::string &rsp_text=rsp->response_text;
+                send(sock,rsp_text.c_str(),rsp_text.size(),0);
+            }
 
         }
 
@@ -491,7 +513,72 @@ class Connect
 class Entry
 {
     public:
-        static void ProcessNonCgi(Connect*conn,Http_Request*rq,Http_Response*rsp)
+        static int ProcessCgi(Connect*conn,Http_Request*rq,Http_Response*rsp)
+        {
+            int input[2];
+            int output[2];
+            pipe(input);//child
+            pipe(output);
+
+            std::string bin=rsp->Path();//wwwroot/a/b/binX;
+            std::string param=rq->GetParam();
+            int size=param.size();
+            std::string param_size="CONTENT-LENGTH=";
+            param_size+=Util::IntToString(size);
+
+            std::string &response_text=rsp->response_text;
+
+            pid_t id=fork();
+            if(id<0)
+            {
+                LOG("fork error!",WARNING);
+                return 503;
+            }
+            else if(id==0)//child
+            {
+                close(input[1]);
+                close(output[0]);
+                putenv((char*)param_size.c_str());
+                dup2(input[0],0);
+                dup2(output[1],1);
+
+                execl(bin.c_str(),bin.c_str(),NULL);
+                exit(1);
+                //exec*
+
+            }
+            else //father
+            {
+                close(input[0]);
+                close(output[1]);
+
+                char c;
+                for(auto i=0;i<size;i++)
+                {
+                    c=param[i];
+                    write(input[1],&c,1);
+                }
+                //wait()
+                waitpid(id,NULL,0);
+                while(read(output[0],&c,1)>0)
+                {
+                    response_text.push_back(c);
+
+                }
+                rsp->MakeStatusLine();
+                rsp->SetRecourceSize(response_text.size());
+                rsp->MakeResponseHeader();
+
+                conn->SendStatusLine(rsp);
+                conn->SendHeader(rsp); //add \n
+                conn->SendText(rsp,true);
+
+
+            }
+            return 200;
+
+        }
+        static int ProcessNonCgi(Connect*conn,Http_Request*rq,Http_Response*rsp)
         {
             rsp->MakeStatusLine();
             rsp->MakeResponseHeader();
@@ -499,14 +586,15 @@ class Entry
 
             conn->SendStatusLine(rsp);
             conn->SendHeader(rsp); //add \n
-            conn->SendText(rsp);
+            conn->SendText(rsp,false);
             LOG("Send Response Done!",NORMAL);
         }
-        static void ProcessResponse(Connect*conn,Http_Request*rq,Http_Response*rsp)
+        static int ProcessResponse(Connect*conn,Http_Request*rq,Http_Response*rsp)
         {
             if(rq->IsCgi())
             {
-                //ProcessCgi();
+                LOG("MakeResponse Use Cgi",NORMAL);
+                ProcessCgi(conn,rq,rsp);
             }
             else
             {
