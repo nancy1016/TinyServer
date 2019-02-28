@@ -603,19 +603,18 @@ class Entry
             }
             
         }
-       static void*HandlerRequest(void*arg)
+       static void HandlerRequest(int sock)
         {
             pthread_detach(pthread_self());
-            int*sock=(int*)arg;
 #ifdef _DEBUG_
             //测试：处理请求.这里先不分析,只把请求读出来
             char buff[10240];
-            read(*sock,buff,sizeof(buff));
+            read(sock,buff,sizeof(buff));
             std::cout<<"#############################################"<<std::endl;
             std::cout<<buff<<std::endl;
             std::cout<<"#############################################"<<std::endl;
 #else
-            Connect*conn=new Connect(*sock);
+            Connect*conn=new Connect(sock);
             Http_Request*rq=new Http_Request();
             Http_Response*rsp=new Http_Response();
             int &code=rsp->Code();
@@ -656,10 +655,8 @@ end:
             delete conn;
             delete rq;
             delete rsp;
-            delete sock;
 
 #endif
-            return(void*)0;
 
         }
     
